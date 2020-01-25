@@ -18,11 +18,11 @@
     NfcInFlutterPlugin* instance = [[NfcInFlutterPlugin alloc]
                                     init:dispatchQueue
                                     channel:channel];
-  
+    
     [registrar addMethodCallDelegate:instance channel:channel];
     [tagChannel setStreamHandler:instance->wrapper];
 }
-    
+
 - (id)init:(dispatch_queue_t)dispatchQueue channel:(FlutterMethodChannel*)channel {
     self->dispatchQueue = dispatchQueue;
     if (@available(iOS 13.0, *)) {
@@ -40,13 +40,13 @@
         [self handleMethodCallAsync:call result:result];
     });
 }
-    
+
 - (void)handleMethodCallAsync:(FlutterMethodCall*)call result:(FlutterResult)result {
     if ([@"readNDEFSupported" isEqualToString:call.method]) {
         result([NSNumber numberWithBool:[wrapper isEnabled]]);
     } else if ([@"startNDEFReading" isEqualToString:call.method]) {
         NSDictionary* args = call.arguments;
-        [wrapper startReading:[args[@"scan_once"] boolValue]];
+        [wrapper startReading:[args[@"scan_once"] boolValue] alertMessage:args[@"alert_message"]];
         result(nil);
     } else if ([@"writeNDEF" isEqualToString:call.method]) {
         NSDictionary* args = call.arguments;
@@ -68,9 +68,12 @@
     // Since this function is called when it invalidates, the session can safely be removed.
     // A new session doesn't have to be created immediately as that will happen the next time
     // startReading() is called.
+    
+    
     session = nil;
     
     // If the event stream is closed we can't send the error
+    
     if (events == nil) {
         return;
     }
@@ -87,10 +90,11 @@
                     details:nil]);
             break;
         case NFCReaderSessionInvalidationErrorUserCanceled:
-            events([FlutterError
-                    errorWithCode:@"UserCanceledSessionError"
-                    message:error.localizedDescription
-                    details:nil]);
+            // events([FlutterError
+            //         errorWithCode:@"UserCanceledSessionError"
+            //         message:error.localizedDescription
+            //         details:nil]);
+            return;
             break;
         case NFCReaderSessionInvalidationErrorSessionTimeout:
             events([FlutterError
@@ -133,11 +137,13 @@
 // However if it was not triggered by manuallyStopStream(), it should invalidate
 // the reader session if activate
 - (FlutterError * _Nullable)onCancelWithArguments:(id _Nullable)arguments {
- if (session != nil && [session isReady]) {
-        [session invalidateSession];
-        session = nil;
+    if (self->session != nil) {
+        [self->session invalidateSession];
+        
     }
-    events = nil;
+    
+    //events = nil;
+    //events(FlutterEndOfEventStream);
     return nil;
 }
 
@@ -157,9 +163,9 @@
         if ([@"T" isEqualToString:type]) {
             // Remove the first byte from the payload
             payloadData = [[NSString alloc]
-                    initWithData:[payload.payload
-                                  subdataWithRange:NSMakeRange(1, payload.payload.length-1)]
-                    encoding:NSUTF8StringEncoding];
+                           initWithData:[payload.payload
+                                         subdataWithRange:NSMakeRange(1, payload.payload.length-1)]
+                           encoding:NSUTF8StringEncoding];
             
             const unsigned char* bytes = [payload.payload bytes];
             int languageCodeLength = bytes[0] & 0x3f;
@@ -169,9 +175,9 @@
                             encoding:NSUTF8StringEncoding];
             // Exclude the language code from the data
             data = [[NSString alloc]
-                   initWithData:[payload.payload
-                                 subdataWithRange:NSMakeRange(languageCodeLength+1, payload.payload.length-languageCodeLength-1)]
-                   encoding:NSUTF8StringEncoding];
+                    initWithData:[payload.payload
+                                  subdataWithRange:NSMakeRange(languageCodeLength+1, payload.payload.length-languageCodeLength-1)]
+                    encoding:NSUTF8StringEncoding];
         } else if ([@"U" isEqualToString:type]) {
             NSString* url;
             const unsigned char* bytes = [payload.payload bytes];
@@ -434,18 +440,19 @@
     self->dispatchQueue = dispatchQueue;
     return self;
 }
+
+- (void)startReading:(BOOL)once alertMessage:(NSString* _Nonnull)alertMessage {
     
-- (void)startReading:(BOOL)once {
-    if (session == nil) {
-        session = [[NFCNDEFReaderSession alloc]initWithDelegate:self queue:dispatchQueue invalidateAfterFirstRead: once];
-    }
+    self->session=[[NFCNDEFReaderSession alloc]initWithDelegate:self queue:dispatchQueue invalidateAfterFirstRead: once];
+    
+    
     [self->session beginSession];
 }
-    
+
 - (BOOL)isEnabled {
     return NFCNDEFReaderSession.readingAvailable;
 }
-    
+
 - (void)readerSession:(nonnull NFCNDEFReaderSession *)session didDetectNDEFs:(nonnull NSArray<NFCNDEFMessage *> *)messages API_AVAILABLE(ios(11.0)) {
     // Iterate through the messages and send them to Flutter with the following structure:
     // { Map
@@ -462,7 +469,7 @@
         NSDictionary* result = [self formatMessageWithIdentifier:@"" message:message];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (self->events != nil) {
-               self->events(result);
+                self->events(result);
             }
         });
     }
@@ -500,6 +507,10 @@
                 dispatch_async(dispatch_get_main_queue(), ^{
                     if (self->events != nil) {
                         self->events(result);
+                        
+                    }
+                    else{
+                        
                     }
                 });
             }];
@@ -531,10 +542,11 @@
     NFCNDEFMessage* ndefMessage = [self formatNDEFMessageWithDictionary:data];
     
     if (lastTag != nil) {
-        if (!lastTag.available) {
-            completionHandler([FlutterError errorWithCode:@"NFCTagUnavailable" message:@"the tag is unavailable for writing" details:nil]);
-            return;
-        }
+        
+        //        if (!lastTag.available) {
+        //            completionHandler([FlutterError errorWithCode:@"NFCTagUnavailable" message:@"the tag is unavailable for writing" details:nil]);
+        //            return;
+        //        }
         
         // Connect to the tag.
         // The tag might already be connected to, but it doesn't hurt to do it again.
@@ -598,7 +610,7 @@
     // https://knowyourmeme.com/photos/1483348-bugs-bunnys-no
     return NO;
 }
-- (void)startReading:(BOOL)once {
+- (void)startReading:(BOOL)once alertMessage:(NSString* _Nonnull)alertMessage {
     return;
 }
 
@@ -608,7 +620,7 @@
             message:nil
             details:nil];
 }
-    
+
 - (FlutterError * _Nullable)onCancelWithArguments:(id _Nullable)arguments {
     return nil;
 }
@@ -619,5 +631,5 @@
                        message:nil
                        details:nil]);
 }
-    
+
 @end
